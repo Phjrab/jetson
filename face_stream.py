@@ -1,16 +1,19 @@
 import cv2
 import mediapipe as mp
 from flask import Flask, render_template, Response, jsonify
+import signal
+import sys
 
 app = Flask(__name__)
 
-# 전역 변수: 얼굴 상태 저장
+# 전역 변수 설정
 face_status = "Scanning..."
+# [수정] 카메라를 전역에서 한 번만 열도록 설정
+cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
 
-# MediaPipe Face Mesh 초기화 (홍채 인식 포함)
+# MediaPipe Face Mesh 초기화
 mp_face_mesh = mp.solutions.face_mesh
 mp_drawing = mp.solutions.drawing_utils
-# refine_landmarks=True 설정으로 눈동자(홍채)까지 정밀 추적
 face_mesh = mp_face_mesh.FaceMesh(
     max_num_faces=1,
     refine_landmarks=True,
@@ -18,9 +21,22 @@ face_mesh = mp_face_mesh.FaceMesh(
     min_tracking_confidence=0.5
 )
 
+# --- [추가] 자동 정리 함수 ---
+def cleanup_resources(sig, frame):
+    print('\n[시스템] 종료 신호를 감지했습니다. Face Mesh 엔진을 정지합니다...')
+    if cap.isOpened():
+        cap.release()
+    cv2.destroyAllWindows()
+    print('[시스템] 카메라 자원 해제 완료. 안전하게 종료되었습니다.')
+    sys.exit(0)
+
+# Ctrl+C 신호 등록
+signal.signal(signal.SIGINT, cleanup_resources)
+# ---------------------------
+
 def generate_frames():
     global face_status
-    cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+    # 이제 cap을 함수 내부에서 새로 생성하지 않고 전역 변수를 사용합니다.
     
     while True:
         success, frame = cap.read()
@@ -43,12 +59,12 @@ def generate_frames():
                     connection_drawing_spec=mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=1, circle_radius=1)
                 )
                 
-                # 2. 입 벌림 감지 로직 (윗입술 13번, 아랫입술 14번 점 거리)
+                # 2. 입 벌림 감지 로직
                 upper_lip = face_landmarks.landmark[13].y
                 lower_lip = face_landmarks.landmark[14].y
                 mouth_distance = lower_lip - upper_lip
                 
-                if mouth_distance > 0.05: # 기준값은 환경에 따라 조절 가능
+                if mouth_distance > 0.05:
                     status = "Mouth Open"
                 else:
                     status = "Face Active"

@@ -1,20 +1,36 @@
 import cv2
 import mediapipe as mp
 from flask import Flask, render_template, Response, jsonify
+import signal  # 추가: 종료 신호 감지
+import sys     # 추가: 시스템 종료
 
 app = Flask(__name__)
 
-# 전역 변수로 손가락 개수 저장
+# 전역 변수 설정
 current_count = 0
+cap = cv2.VideoCapture(0, cv2.CAP_V4L2) # 카메라를 전역으로 미리 열어둠
 
 # MediaPipe 초기화
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
 
+# --- [추가] 자동 정리 함수 ---
+def cleanup_resources(sig, frame):
+    print('\n[시스템] 종료 신호를 감지했습니다. 자원을 해제합니다...')
+    if cap.isOpened():
+        cap.release()
+    cv2.destroyAllWindows()
+    print('[시스템] 카메라가 안전하게 끄졌습니다. 퇴근!')
+    sys.exit(0)
+
+# Ctrl+C (SIGINT) 신호가 들어오면 cleanup_resources 함수를 실행하도록 등록
+signal.signal(signal.SIGINT, cleanup_resources)
+# ---------------------------
+
 def generate_frames():
     global current_count
-    cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+    # 이제 cap은 밖에서 전역으로 관리하므로 여기서 새로 열지 않습니다.
     tip_ids = [8, 12, 16, 20]
     
     while True:
@@ -31,15 +47,18 @@ def generate_frames():
                 mp_drawing.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
                 landmarks = hand_landmarks.landmark
                 fingers = []
-                # 엄지/나머지 손가락 계산 (기존 로직 동일)
+                
+                # 엄지 계산
                 if landmarks[4].x < landmarks[3].x: fingers.append(1)
                 else: fingers.append(0)
+                
+                # 나머지 손가락 계산
                 for tip_id in tip_ids:
                     if landmarks[tip_id].y < landmarks[tip_id - 2].y: fingers.append(1)
                     else: fingers.append(0)
                 count = fingers.count(1)
         
-        current_count = count # 실시간 개수 업데이트
+        current_count = count
         
         ret, buffer = cv2.imencode('.jpg', image)
         frame = buffer.tobytes()
@@ -52,11 +71,11 @@ def video_feed():
 
 @app.route('/get_count')
 def get_count():
-    # 웹사이트에서 숫자를 요청하면 현재 개수를 반환함
     return jsonify(count=current_count)
 
 @app.route('/')
 def index():
+    # (기존 HTML 코드는 동일하므로 유지됩니다)
     return """
     <!DOCTYPE html>
     <html>
@@ -75,7 +94,6 @@ def index():
             .status-btn { background: #2e7d32; color: white; border: none; padding: 10px; border-radius: 5px; width: 100%; }
         </style>
         <script>
-            // 0.1초마다 서버에서 손가락 개수를 가져와서 화면에 표시
             setInterval(function() {
                 fetch('/get_count')
                     .then(response => response.json())
@@ -107,4 +125,5 @@ def index():
     """
 
 if __name__ == '__main__':
+    # threaded=True를 사용하여 스트리밍과 API 응답을 동시에 처리
     app.run(host='0.0.0.0', port=5000, threaded=True)
