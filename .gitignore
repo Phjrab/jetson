@@ -1,0 +1,10 @@
+*.engine
+*.pt
+*.onnx
+*.weights
+yolo_env/
+venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.DS_Store
